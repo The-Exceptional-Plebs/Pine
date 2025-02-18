@@ -1,0 +1,325 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © balipour
+
+//@version=5
+//@author=pig and balipour
+
+indicator('Moments Functions [pig]', 'BA🐷 Moments', precision=3)
+
+// ————— Constants 
+// {
+// ————— Options for inputs.
+MN = 'Mean'
+VA = 'Variance'
+SK = 'Skewness'
+EK = 'Excess Kurtosis'
+LR = 'Log Returns'
+OS = 'Original Source'
+DS = 'SPY'
+ON = 'On'
+OFF = 'Off'
+
+// ————— Constants Numbers.
+centerline = 0
+zscoreS = 1.96  //absolute zscore for N < 50 95% confidence
+zscoreL = 3.29  //absolute zscore for N > 50 95% confidence
+skewrv = 2.0  //skewness reference value  for N > 300
+kurtrv = 10.0  //Excess Kurtosis reference value  for N > 300 (value for kurtosis is 7, excess kurtosis = 7 + 3)
+
+
+// ————— Default colors for color inputs.
+c_mean0p = color.lime
+c_mean0m = color.red
+c_mean = color.white
+c_return0p = color.green
+c_return0m = color.red
+c_band = color.blue
+c_variance = color.orange
+c_skew0p = #5AE1BB
+c_skew0m = #E10047
+c_kurt0p = #E189BF
+c_kurt0m = color.aqua
+c_cv = color.yellow
+c_center = color.white
+c_centerr = color.aqua
+c_pane = #000000c0
+// }
+
+// ———————————————————— Inputs
+// {
+_10 = input(true, '══════════ Moments Settings ═════════════')
+ms = input.string(MN, 'Moments Selections', options=[MN, VA, SK, EK])
+sr = input.string(OFF, 'Show Returns/Source (Mean)', options=[OFF, ON]) == ON
+sb = input.string(OFF, 'Show Bands      (Mean)', options=[OFF, ON]) == ON
+sdmult = input.float(1.96, '  -Bands Multiplier (Mean)', minval=0.5)
+ssd = input.string(OFF, 'Show stdev instead  (Variance)', options=[OFF, ON]) == ON
+scv = input.string(ON, 'Show Critical Values   (Skew/Kurtosis)', options=[OFF, ON]) == ON
+
+_20 = input(true, '═══════════ Source Settings ══════════════')
+n = input.int(30, 'Lookback', minval=5, step=2)
+src = input(close, 'Source Input')
+srcsl = input.string(LR, '  -Source Selections', options=[LR, OS])
+uos = input.string(OFF, 'Use Other Symbol', options=[OFF, ON]) == ON
+sec1in = input.symbol(DS, '  -Symbol Input')
+
+_30 = input(true, '════════════ Plot Settings ═══════════════')
+sp = input.string(ON, 'Show Information Panel', options=[OFF, ON]) == ON
+lT = input.int(1, 'Line Thickness', options=[1, 2, 3])
+bg = input.string(ON, 'Dark Background', options=[OFF, ON]) == ON
+
+_40 = input(true, '════════════ Colors Settings ══════════════')
+i_c_mean0p = input(c_mean0p, 'Mean: above 0')
+i_c_mean0m = input(c_mean0m, 'Mean: below 0 ')
+i_c_mean = input(c_mean, 'Mean : When Returns is ON')
+i_c_return0p = input(c_return0p, 'Returns: above 0')
+i_c_return0m = input(c_return0m, 'Returns: below 0')
+i_c_band = input(c_band, 'SD Bands')
+i_c_variance = input(c_variance, 'Variance')
+i_c_skew0p = input(c_skew0p, 'Skewness: above 0')
+i_c_skew0m = input(c_skew0m, 'Skewness: below 0')
+i_c_kurt0p = input(c_kurt0p, 'Excesss Kurtosis: above 0')
+i_c_kurt0m = input(c_kurt0m, 'Excess Kurtosis: below 0')
+i_c_cv = input(c_cv, 'Critical Values')
+i_c_center = input(c_center, 'Center Line')
+i_c_centerr = input(c_centerr, 'Center Line: When Return is On')
+i_c_pane = input(c_pane, 'Panel')
+
+bgcolor(bg ? color.new(#000000, 20) : na, title='Dark Background', transp=90)
+// }
+
+// ————— Source
+// {
+//Log Returns
+logreturn = math.log(src / src[1]) * 100  //times 100 to make the output more readable
+//Alternative Source
+as_1 = srcsl == LR ? logreturn : src
+//Symbols
+x = uos ? request.security(sec1in, timeframe.period, as_1) : as_1
+
+//}
+
+// ————— Moments Functions Calculations
+// {
+
+//Custom Sample Variance and Sample Standard Deviaiton function. Build in variance() and stdev() uses population instead of sample
+
+//Variance Function (Sample)
+f_va(x, n) =>
+    mean = ta.sma(x, n)
+    s = array.new_float(0)
+    for i = 0 to n - 1 by 1
+        array.push(s, math.pow(x[i] - mean, 2))  //second moment deviation from the mean to the power of 2
+    sum = array.sum(s)
+    //Divide by n - 1 instead of n for sample variance (one less degree of freedom, unbiased)
+    variance = sum / (n - 1)
+    variance
+
+//Standard Deviation Function (Sample)
+f_sd(x, n) =>
+    mean = ta.sma(x, n)
+    s = array.new_float(0)
+    for i = 0 to n - 1 by 1
+        array.push(s, math.pow(x[i] - mean, 2))
+    sum = array.sum(s)
+    //Divide n - 1 instead of n for sample standard deviation (one less degree of freedom, unbiased)
+    variance = sum / (n - 1)
+    sd = math.sqrt(variance)  //Sqrt of variance = sd
+    sd
+
+//Skenwness Function (Sample)
+f_skew(x, n) =>
+    //Mean
+    mean = ta.sma(x, n)
+    //Sample Standard Deviation for Sample Skewness (need to use custom sample sd function instead of build in stdev) 
+    s1 = array.new_float(0)
+    for i = 0 to n - 1 by 1
+        array.push(s1, math.pow(x[i] - mean, 2))
+    sum = array.sum(s1)
+    variance = sum / (n - 1)
+    std = math.sqrt(variance)
+    //Skewness calculation
+    s2 = array.new_float(0)
+    for i = 0 to n - 1 by 1
+        array.push(s2, math.pow(x[i] - mean, 3))  //third moment deviation from the mean to the power of 3
+    sum2 = array.sum(s2)
+    //Unbiased Estimator For Sample Skewness
+    a = sum2 * n
+    b = (n - 1) * (n - 2) * math.pow(std, 3)  //third momemnt SD to the power of 3
+    skewness = a / b
+    skewness
+
+//Kurtosis Function (Sample)
+f_kurt(x, n) =>
+    //mean
+    mean = ta.sma(x, n)
+    //Sample Standard Deviation for Sample Kurtosis (need to use custom sample sd function instead of build in stdev) 
+    s1 = array.new_float(0)
+    for i = 0 to n - 1 by 1
+        array.push(s1, math.pow(x[i] - mean, 2))
+    sum = array.sum(s1)
+    variance = sum / (n - 1)
+    std = math.sqrt(variance)
+    //Kurtosis Calculation
+    s2 = array.new_float(0)
+    for i = 0 to n - 1 by 1
+        array.push(s2, math.pow(x[i] - mean, 4))  //forth moment deviation from the mean to the power of 4
+    sum2 = array.sum(s2)
+    //Unbiased Estimator For Sample Kurtosis
+    a = n * (n + 1) * sum2
+    b = (n - 1) * (n - 2) * (n - 3) * math.pow(std, 4)  //Forth moment SD to the power of 4
+    kurtosis = a / b - 3 * math.pow(n - 1, 2) / ((n - 2) * (n - 3))
+    kurtosis
+
+// }
+
+// ————— Moments Output
+// {
+
+//First Raw Moment: Mean
+mean = ta.sma(x, n)
+//Second Raw Moment : Variance
+variance = f_va(x, n)
+//Third Standardized Moment : Skewness
+skewness = f_skew(x, n)
+//Fourth Standardized Moment : kurtosis (Normal distribution kurtosis = 3, excess kurtosis = kurtosis - normal distribution kutosis)
+excesskurtosis = f_kurt(x, n)
+
+//Sample Standard Deviaiton (not moment)
+standarddeviation = f_sd(x, n)
+
+//Show Variance or Standard Deviation
+vsd = ssd ? standarddeviation : variance
+
+//Function Returns the selected Moments
+f_M(_ms) =>
+    _ms == MN ? mean : _ms == VA ? vsd : _ms == SK ? skewness : _ms == EK ? excesskurtosis : float(na)
+
+out = f_M(ms)
+
+// }
+
+// ————— Standard Error Functions
+// {
+
+//Standard Error of Skewness Function 
+seskew(n) =>
+    math.sqrt(6 * n * (n - 1) / ((n - 2) * (n + 1) * (n + 3)))
+
+//Standard Error of Kurtosis Function
+sekurt(n) =>
+    //Standard Error of Skewness
+    sesk = math.sqrt(6 * n * (n - 1) / ((n - 2) * (n + 1) * (n + 3)))
+    //Stanard Error of Kurtosis
+    2 * sesk * math.sqrt((math.pow(n, 2) - 1) / ((n - 3) * (n + 5)))
+
+// }
+
+// ————— Critical Values Functions
+// {
+//Critical Value = zscore * standard error
+
+//Skewness Critical Value Function
+skewcv() =>
+    n > 300 ? skewrv : n > 50 ? zscoreL * seskew(n) : zscoreS * seskew(n)
+
+//Kurtosis Critical Value Function 
+kurtcv() =>
+    n > 300 ? kurtrv : n > 50 ? zscoreL * sekurt(n) : zscoreS * sekurt(n)
+//Critical Value
+cv(_ms) =>
+    _ms == SK ? skewcv() : _ms == EK ? kurtcv() : float(na)
+
+// }
+
+// ————— Plotting Functions
+// {
+
+//Colors Function
+f_color() =>
+    if ms == MN
+        sr ? i_c_mean : out > 0 ? i_c_mean0p : i_c_mean0m
+    else if ms == VA
+        i_c_variance
+    else if ms == SK
+        out > 0 ? i_c_skew0p : i_c_skew0m
+    else if ms == EK
+        out > 0 ? i_c_kurt0p : i_c_kurt0m
+    else
+        color(na)
+
+//label Panel Function
+_label(T, color_PnL) =>
+    label PnL_Label = na
+    label.delete(PnL_Label[1])
+    ay = 0.5 * (ta.highest(out, 200) + ta.lowest(out, 200))  //Slightly adjust y position for better alignment
+    y = ms == VA or ms == EK ? ay : 0
+    PnL_Label := label.new(time, y, text=T, color=color_PnL, textcolor=color.white, size=size.normal, style=label.style_label_left, xloc=xloc.bar_time, textalign=text.align_left)
+    label.set_x(PnL_Label, label.get_x(PnL_Label) + math.round(ta.change(time) * 3))
+
+//Round Function
+Round(src, digits) =>
+    p = math.pow(10, digits)
+    math.round(math.abs(src) * p) / p * math.sign(src)
+
+//Sign Function
+Sign(X) =>
+    X > 0 ? '+' : na
+
+//Mean Text Function
+textm() =>
+    mean > 0 ? 'Mean: ' + Sign(mean) + str.tostring(Round(mean, 3)) : 'Mean: ' + str.tostring(Round(mean, 3))
+
+//Skewness Text Function
+textsk() =>
+    text_1 = skewness > 0 and skewness > skewcv() ? 'Skewness: ' + Sign(skewness) + str.tostring(Round(skewness, 3)) + ' (Significant)' : skewness < 0 and skewness < -skewcv() ? 'Skewness: ' + str.tostring(Round(skewness, 3)) + ' (Significant)' : skewness > 0 ? 'Skewness: ' + Sign(skewness) + str.tostring(Round(skewness, 3)) + ' (Insignificant)' : skewness < 0 ? 'Skewness: ' + str.tostring(Round(skewness, 3)) + ' (Insignificant)' : na
+    text_1
+
+//Variance / Standard Deviation Text Function
+textv() =>
+    ssd ? 'Stdev: ' + str.tostring(Round(standarddeviation, 3)) : 'Variance: ' + str.tostring(Round(variance, 3))
+
+//Kurtosis Text Function
+textkt() =>
+    text_2 = excesskurtosis > 0 and excesskurtosis > kurtcv() ? 'Kurtosis: ' + Sign(excesskurtosis) + str.tostring(Round(excesskurtosis, 3)) + ' (Significant)' : excesskurtosis < 0 and excesskurtosis < -kurtcv() ? 'Kurtosis: ' + str.tostring(Round(excesskurtosis, 3)) + ' (Significant)' : excesskurtosis > 0 ? 'Kurtosis: ' + Sign(excesskurtosis) + str.tostring(Round(excesskurtosis, 3)) + ' (Insignificant)' : excesskurtosis < 0 ? 'Kurtosis: ' + str.tostring(Round(excesskurtosis, 3)) + ' (Insignificant)' : na
+    text_2
+
+// }
+
+// ————— Other Outputs
+// {
+
+//Returns
+rt = ms == MN and sr ? x : na
+//SD Bands
+uband = ms == MN and sb ? mean + sdmult * standarddeviation : na
+dband = ms == MN and sb ? mean - sdmult * standarddeviation : na
+//Critical Values
+cvp = (ms == SK or ms == EK) and scv ? cv(ms) : na
+cvn = (ms == SK or ms == EK) and scv ? -cv(ms) : na
+//Returns Color
+rcolor = rt > 0 ? i_c_return0p : i_c_return0m
+//Centerline Color
+cc = ms == MN and sr ? i_c_centerr : i_c_center
+//Plot Styles
+style = ms == SK ? plot.style_columns : plot.style_line
+
+// }
+
+// ———————————————————— Plots
+// {
+
+hline(centerline, 'Centerline', cc, hline.style_dotted)
+plot(out, 'Moment', f_color(), lT, style)
+plot(rt, 'Log Returns', rcolor, lT, plot.style_circles)
+
+//SD Bands
+plot(uband, 'SD Band', i_c_band, lT, transp=25)
+plot(dband, 'SD Band', i_c_band, lT, transp=25)
+//Critical Values
+plot(cvp, 'Critical Value', i_c_cv, trackprice=true, show_last=1, style=plot.style_linebr)
+plot(cvn, 'Critical Value', i_c_cv, trackprice=true, show_last=1, style=plot.style_linebr)
+//Information Panel
+if sp
+    _label(textm() + '\n\n' + textv() + '\n\n' + textsk() + '\n\n' + textkt(), i_c_pane)
+
+// }
