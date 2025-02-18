@@ -1,0 +1,121 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © balipour
+
+//@version=5
+var maxLines = 500
+indicator('️Omega Ratio', 'Ω Ratio', max_lines_count=maxLines, max_bars_back=5000)
+
+bgcolor(#000000c0)
+group_1 = 'Color Settings'
+t = ticker.new(syminfo.prefix, syminfo.ticker)
+sec1in = input.symbol('SPX500USD', 'Low-Risk Security', tooltip='A low risk security used to generate Minimal Acceptable Return (MAR) levels for Omega calculations', confirm=true)
+period = input.int(252, 'Omega Period', minval=1)
+lineCount = input.int(50, 'Increments', tooltip='Number of MARs the calculation is carried on', minval=1, maxval=maxLines, step=5)
+sec2in = input.symbol('INDEX:BTCUSD', '  Other Symbol', tooltip='A comparison security for preformance evaluation')
+c1 = input.color(#FF22FFff, 'On Chart Symbol', inline='On Chart Symbol', group=group_1)
+c2 = input.color(#0080FFff, 'Other Symbol', inline='On Chart Symbol', group=group_1)
+
+
+var maxMinusOne = lineCount - 1
+var periodMinusOne = period - 1
+var OTHER_SYMBOL = sec2in
+var LOW_RISK_SECURITY = sec1in
+var TICKER_ID_SYMBOL = syminfo.prefix + ':' + syminfo.ticker
+var TICKER_ID_OTHER = sec2in
+
+lrs = request.security(LOW_RISK_SECURITY, timeframe.period, close)
+otherSym = request.security(OTHER_SYMBOL, timeframe.period, close)
+
+lastLRS = nz(lrs[1], lrs)
+lowRiskReturn = (lrs - lastLRS) / lastLRS * 100.0
+mar = ta.stdev(lowRiskReturn, period) * 3.0 * math.sqrt(period / (period - 1))
+
+src = close
+src2 = otherSym
+r1 = math.log(src / nz(src[1], src)) * 100
+r2 = math.log(src2 / nz(src2[1], src2)) * 100
+
+var aOmega = array.new_float(lineCount + 1)
+var bOmega = array.new_float(lineCount + 1)
+var aLines = array.new_line(lineCount)
+var bLines = array.new_line(lineCount)
+var Mari = array.new_float(lineCount + 1)
+var rvalue = array.new_label(lineCount)
+var linesAreNA = true
+
+Omg(array, return_1) =>
+    if barstate.islast
+        for i = 0 to lineCount by 1
+            Ps = 0.0
+            Ns = 0.0
+            for j = 0 to periodMinusOne by 1
+                ex = return_1[j] - mar[j] * i / lineCount
+                Ps += (ex > 0 ? ex : 0.0)
+                Ns -= (ex < 0 ? ex : 0.0)
+                Ns
+            array.set(array, i, Ps / Ns)
+
+Omg(aOmega, r1)
+Omg(bOmega, r2)
+
+for i = 0 to maxMinusOne by 1
+    array.set(Mari, i, mar * i / lineCount)
+
+drawLine(X1, Y1, X2, Y2, LineStyle, Color, LineWidth) =>
+    var line Line = na
+    if barstate.islast
+        if na(Line)
+            Line := line.new(X1, Y1, X2, Y2, xloc.bar_index, style=LineStyle, color=Color, width=LineWidth)
+            Line
+        else
+            line.set_xy1(Line, X1, Y1)
+            line.set_xy2(Line, X2, Y2)
+            Line
+
+drawlabel(X, Y, T, labelstyle, TColor, labelsize) =>
+    var label _label = na
+    if barstate.islast
+        if na(_label)
+            _label := label.new(X, Y, T, color=color.new(color.black, 99), textcolor=TColor, style=labelstyle, size=labelsize)
+            _label
+        else
+            label.set_xy(_label, X, Y)
+            _label
+
+
+if barstate.islast
+    if linesAreNA
+        for i = 0 to maxMinusOne by 1
+            barIndexMinusI = bar_index - maxMinusOne + i
+            array.set(aLines, i, line.new(barIndexMinusI - 1, array.get(aOmega, i), barIndexMinusI, array.get(aOmega, i + 1), color=c1, width=2))
+            array.set(bLines, i, line.new(barIndexMinusI - 1, array.get(bOmega, i), barIndexMinusI, array.get(bOmega, i + 1), color=c2, width=2))
+        for j = 0 to maxMinusOne by 3
+            barIndexMinusj = bar_index - maxMinusOne + j - 1
+            array.set(rvalue, j, label.new(barIndexMinusj, -0.005, text='⃓\n' + str.tostring(math.round(array.get(Mari, j), 3)), color=#00000000, textcolor=#C0C0C0ff, style=label.style_label_center, size=size.small))
+        linesAreNA := false
+        linesAreNA
+    else
+        for i = 0 to maxMinusOne by 1
+            barIndexMinusI = bar_index - maxMinusOne + i
+            lineID1 = array.get(aLines, i)
+            lineID2 = array.get(bLines, i)
+            line.set_xy1(lineID1, barIndexMinusI - 1, array.get(aOmega, i))
+            line.set_xy2(lineID1, barIndexMinusI, array.get(aOmega, i + 1))
+            line.set_xy1(lineID2, barIndexMinusI - 1, array.get(bOmega, i))
+            line.set_xy2(lineID2, barIndexMinusI, array.get(bOmega, i + 1))
+        for j = 0 to maxMinusOne by 3
+            label1 = array.get(rvalue, j)
+            barIndexMinusj = bar_index - maxMinusOne + j - 1
+            label.set_x(label1, barIndexMinusj)
+        na
+    maxh = math.max(array.get(aOmega, 0), array.get(bOmega, 0))
+    barIndexMinusLineCount = bar_index - lineCount
+    drawLine(barIndexMinusLineCount, 0.0, bar_index, 0.0, line.style_arrow_right, #DDDDDDff, 1)
+    drawLine(barIndexMinusLineCount, 0.0, barIndexMinusLineCount, maxh * 1.1, line.style_arrow_right, #DDDDDDff, 1)
+    drawlabel(bar_index, 0, '𝒓 %', label.style_label_left, #FFFFFFff, size.large)
+    drawlabel(barIndexMinusLineCount, maxh * 1.1, 'Ω', label.style_label_down, #FFFFFFff, size.large)
+    drawlabel(barIndexMinusLineCount, array.get(aOmega, 1), TICKER_ID_SYMBOL, label.style_label_up, c1, size.normal)
+    drawlabel(barIndexMinusLineCount, array.get(bOmega, 1), TICKER_ID_OTHER, label.style_label_right, c2, size.normal)
+
+hline(1.0, color=#C0C000ff, linestyle=hline.style_dotted)
+hline(-0.1, color=#00000000)
