@@ -1,0 +1,128 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Motgench
+
+//@version=5
+indicator('Linear Moments', precision=10)
+
+MN = 'Mean'
+VA = 'Scale'
+SK = 'Skewness'
+EK = 'Kurtosis'
+
+LR = 'Log Returns'
+OS = 'Original Source'
+
+NO = "Normal"
+LA = "Laplace"
+ST = "Student-T (df = 2)"
+
+
+src = input.source(close,     "Source",                   group = "Source settings"                             )
+sl  = input.string(LR,        "Source Selections",        group = "Source settings",    options = [LR,OS]       )
+ms  = input.string(MN,        "Moments Selections",       group  = "Moments Settings",   options=[MN, VA, SK, EK])
+len = input.int(300,          "Lookback" ,                group  = "Moments Settings"                            )
+cs  = input.string(NO,        "Theoretical Distribution", group  = "Moments Settings",   options = [NO,LA,ST]    )
+
+cm1 = input.color(color.rgb(244, 25, 9),       "mean < 0",                      group = "Color Selection")
+cm2 = input.color(color.rgb(39, 255, 111, 1),  "mean < 0",                      group = "Color Selection")
+cv =  input.color(color.orange,                "L-Scale",                            group = "Color Selection")
+cs1 = input.color(color.rgb(233, 3, 53),       "L-Skewness < 0",                        group = "Color Selection")
+cs2 = input.color(color.rgb(0,255, 119),       "L-Skewness > 0",                        group = "Color Selection")
+ck1 = input.color(color.rgb(0, 255, 195),      "L-Kurtosis < theoretical_distribution", group = "Color Selection")
+ck2 = input.color(color.rgb(163, 106, 255),    "L-Kurtosis > theoretical_distribution", group = "Color Selection")
+
+
+rx = math.log(close / close[1])
+
+f_S(_sl) =>
+    _sl == LR ? rx : src
+
+r = f_S(sl)
+
+var arecord = array.new_float(len+1)
+var asort = array.new_float(len)
+
+if bar_index > 0 
+    array.unshift(arecord,r)
+    array.pop(arecord)
+
+var x1=0.0
+xn = bar_index > len ? array.get(arecord,len) : 0
+x1 := nz(x1) + r - xn
+
+if bar_index == len
+    asort := array.copy(arecord)
+    array.sort(asort)
+
+if bar_index > len
+    a0 = array.get(arecord,len)
+    aid = array.binary_search(asort,a0)
+    array.remove(asort,aid)
+    searchid = array.binary_search_rightmost(asort,r)
+    array.insert(asort,searchid,r)
+
+
+
+B0 = x1/len
+sB1 = 0.0
+sB2 = 0.0
+sB3 = 0.0
+for i = 1 to len-1
+    
+    j = i + 1
+    sx = array.get(asort, i)
+    j1 = j-1
+    j2 = j-2
+    j3 = j-3
+    j12 = j1*j2
+    
+    sB1 += sx * j1
+    sB2 += sx * j12
+    sB3 += sx * j12*j3
+
+
+var len1 = len-1
+var len2 = len-2
+var len3 = len-3
+
+var lenb1 = 1/(len*len1)
+var lenb2 = 1 / (len*len1*len2)
+var lenb3 = 1/(len*len1*len2*len3)
+
+B1 = sB1*lenb1
+B2 = sB2*lenb2
+B3 = sB3*lenb3
+
+L2 = 2 * B1 - B0
+L3 = 6 * B2 - 6 * B1 + B0
+L4 = 20 * B3 - 30 * B2 + 12 * B1 - B0
+
+Mean = B0
+t2 = L2
+t3 = L3 / L2
+t4 = L4 / L2
+
+f_D(_cs)=>
+    _cs == NO ? 0.1226 :  _cs == LA ?   0.2357   :   0.375
+
+d_t4 = f_D(cs)
+
+c_mean = Mean > 0 ? cm2 : cm1
+c_scale = cv
+c_skew = t3>0 ? cs2 :cs1
+c_kurt = t4 < d_t4 ? ck1 :ck2
+
+//Function Returns the selected Moments
+f_M(_ms) =>
+    _ms == MN ? Mean : _ms == VA ? t2 : _ms == SK ? t3 : _ms == EK ? t4 : float(na)
+
+f_C(_ms) =>
+    _ms == MN ? c_mean : _ms == VA ? c_scale : _ms == SK ? c_skew : _ms == EK ? c_kurt : color(na)
+
+out_c = f_C(ms)
+out = f_M(ms)
+hline(0)
+plot(ms == EK ? d_t4 : na,"Theoretical Kurtosis",color=color.white, show_last=1,trackprice = true)
+plot(out, "Linear Moment", color = out_c)
+
+
