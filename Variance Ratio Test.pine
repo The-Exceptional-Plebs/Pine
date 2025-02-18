@@ -1,0 +1,117 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © balipour
+
+//@version=5
+indicator('Variance Ratio Test [pig]', 'BA🐷 VRT', false, format.inherit, precision=3, timeframe='')
+
+//Backgorund Color
+bgcolor(#000000c0)
+
+//Inputs
+src = input(close, '===== Source =====')
+t = input.int(32, 'Lookback', minval=6, step=2)
+k = input.int(2, 'Single VRT Sampling Period', minval=2, step=2)
+cl = input.string('5%', 'Critical Value', options=['10%', '5%', '2.5%', '1%'])
+mv = input(true, '-------- Show Multiple Variance Ratio Stats --------')
+v1 = input(true, 'Show VRT1')
+k1 = input.int(2, '  VRT1 Sampling Period', minval=2, step=2)
+v2 = input(true, 'Show VRT2')
+k2 = input.int(4, '  VRT2 Sampling Period', minval=2, step=2)
+v3 = input(true, 'Show VRT3')
+k3 = input.int(8, '  VRT3 Sampling Period', minval=2, step=2)
+v4 = input(true, 'Show VRT4')
+k4 = input.int(16, '  VRT4 Sampling Period', minval=2, step=2)
+v5 = input(false, 'Show VRT5')
+k5 = input.int(32, '  VRT5 Sampling Period', minval=2, step=2)
+lT = input.int(1, '--- Line Thickness ---', options=[1, 2, 3])
+
+//log return one period
+x = math.log(src / src[1])
+
+//mean
+mean = ta.sma(x, t)
+
+//Variance for one period
+s1 = array.new_float(0)
+for i = 0 to t - 1 by 1
+    array.push(s1, math.pow(x[i] - mean, 2))
+v = array.sum(s1) / (t - 1)
+
+//Variance for k period
+Vk(k) =>
+    //log return k period
+    xk = math.log(src / src[k])
+
+    //Variance
+    s2 = array.new_float(0)
+    for i = 0 to t - 1 - k by 1
+        array.push(s2, math.pow(xk[i] - mean * k, 2))
+
+    //m the Unbiased Estimator scaling factor
+    m = k * (t - k + 1) * (1 - k / t)
+
+    //Scale the K period Variance with m
+    vk = array.sum(s2) / m
+    vk
+
+
+//Variance Ratio Function
+VR(k) =>
+    //(Homoscedasiticity assumption) Standard Deviation of variance ratio test
+    phi = 2 * (k - 1) * (2 * k - 1) / (3 * k * t)
+
+    //Variance Ratio (Higher Period Variance / Lower Period Variance)
+    vr = Vk(k) / v
+
+    //Test Stats Z score (Divide SD of VR from VR)
+    z = (vr - 1) / math.sqrt(phi)
+    z
+
+//Multiple Variance Ratio Z Score
+vr = not mv ? VR(k) : na  //Manual enter Period Z Score
+vr1 = v1 and mv ? VR(k1) : na
+vr2 = v2 and mv ? VR(k2) : na
+vr3 = v3 and mv ? VR(k3) : na
+vr4 = v4 and mv ? VR(k4) : na
+vr5 = v5 and mv ? VR(k5) : na
+
+//Critical Values For Z score
+float V = na
+if cl == '10%'
+    V := 1.644853
+    V
+if cl == '5%'
+    V := 1.959964
+    V
+if cl == '2.5%'
+    V := 2.241403
+    V
+if cl == '1%'
+    V := 2.575829
+    V
+
+//Colors
+c(z) =>
+    z > 0 ? color.aqua : color.red
+
+//Background Signals 
+bgcolor(not mv and vr > V ? color.aqua : na, transp=75)
+bgcolor(not mv and vr < -V ? color.fuchsia : na, transp=70)
+
+//Plots
+plot(vr, 'VRT', c(vr), style=plot.style_columns)
+plot(vr1, 'VRT1', c(vr1), linewidth=lT)
+plot(vr2, 'VRT2', c(vr2), linewidth=lT)
+plot(vr3, 'VRT3', c(vr3), linewidth=lT)
+plot(vr4, 'VRT4', c(vr4), linewidth=lT)
+plot(vr5, 'VRT5', c(vr5), linewidth=lT)
+
+hline(0, 'Mid', color.white, hline.style_dotted)
+
+plot(V, 'Critical Value', color.new(color.yellow, 0), trackprice=true, show_last=1, style=plot.style_linebr)
+plot(-V, 'Critival Value', color.new(color.yellow, 0), trackprice=true, show_last=1, style=plot.style_linebr)
+
+
+
+
+
