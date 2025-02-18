@@ -1,0 +1,249 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © balipour
+
+//@version=5
+indicator('Historical Volatility Estimators', 'BA🐷 HVE', precision=2)
+
+// FUNCTIONS
+
+// Close to Close Volatility
+f_coc(x, period, sqrtAnnual) =>
+    mean = ta.sma(x, period)
+    s = array.new_float(0)
+    for i = 0 to period - 1 by 1
+        array.push(s, math.pow(x[i] - mean, 2))
+    sqrtAnnual * math.sqrt(array.sum(s) / (period - 1))
+
+// Parkinson Volatility
+f_park(period, sqrtAnnual) =>
+    var LOG2 = math.log(2)
+    powLogHighLow = math.pow(math.log(high / low), 2)
+    sqrtAnnual * math.sqrt(1.0 / period * math.sum(1.0 / (4.0 * LOG2) * powLogHighLow, period))
+
+// Garman Klass Volatility
+f_gk(period, sqrtAnnual) =>
+    var LOG2 = math.log(2)
+    var SQRT_1_PERIOD = math.sqrt(1 / period)
+    powLogHighLow = math.pow(math.log(high / low), 2)
+    powLogCloseOpen = math.pow(math.log(close / open), 2)
+    tmp = 0.5 * powLogHighLow - (2.0 * LOG2 - 1.0) * powLogCloseOpen
+    sqrtAnnual * math.sqrt(math.sum(tmp, period)) * SQRT_1_PERIOD
+
+// Rogers Satchell Volatility
+f_rsv(period, sqrtAnnual) =>
+    tmp = math.log(high / close) * math.log(high / open) + math.log(low / close) * math.log(low / open)
+    sqrtAnnual * math.sqrt(math.sum(tmp, period) / period)
+
+// Garman Klass Yang Zhang Extension Volatility
+f_gkyz(period, sqrtAnnual) =>
+    var LOG2 = math.log(2)
+    var SQRT_1_PERIOD = math.sqrt(1 / period)
+    powLogHighLow = math.pow(math.log(high / low), 2)
+    powLogCloseOpen = math.pow(math.log(close / open), 2)
+    lastClose = nz(close[1], close)
+    powLogOpenClose1 = math.pow(math.log(open / lastClose), 2)
+    tmp = powLogOpenClose1 + 0.5 * powLogHighLow - (2.0 * LOG2 - 1.0) * powLogCloseOpen
+    sqrtAnnual * math.sqrt(math.sum(tmp, period)) * SQRT_1_PERIOD
+
+// Yang Zhang Volatility
+f_yz(a, period, sqrtAnnual) =>
+    o = math.log(open) - math.log(nz(close[1], close))
+    u = math.log(high) - math.log(open)
+    d = math.log(low) - math.log(open)
+    c = math.log(close) - math.log(open)
+    nMinusOne = period - 1
+    avgo = ta.sma(o, period)
+    avgc = ta.sma(c, period)
+    so = array.new_float(0)
+    sc = array.new_float(0)
+    for i = 0 to period - 1 by 1
+        array.push(so, math.pow(o[i] - avgo, 2))
+        array.push(sc, math.pow(c[i] - avgc, 2))
+    sumo = array.sum(so)
+    sumc = array.sum(sc)
+    Vo = sumo / nMinusOne
+    Vc = sumc / nMinusOne
+    Vrs = math.sum(u * (u - c) + d * (d - c), period) / period
+    k = (a - 1.0) / (a + (period + 1.0) / nMinusOne)
+    sqrtAnnual * math.sqrt(Vo + k * Vc + (1.0 - k) * Vrs)
+
+// Exponentially Weighted Volatility
+f_ewma(source, period, sqrtAnnual) =>
+    var lambda = (period - 1) / (period + 1)
+    squared = math.pow(source, 2)
+    float v = na
+    v := lambda * nz(v[1], squared) + (1.0 - lambda) * squared
+    sqrtAnnual * math.sqrt(v)
+
+// Mean Absolute Deviation (Adjusted)
+f_mad(source, period, sqrtAnnual) =>
+    var SQRT_HALF_PI = math.sqrt(math.asin(1))
+    mean = ta.sma(source, period)
+    S = array.new_float(0)
+    for i = 0 to period - 1 by 1
+        array.push(S, math.abs(source[i] - mean))
+    sumS = array.sum(S)
+    sqrtAnnual * (sumS / period) * SQRT_HALF_PI
+
+// Median Absolute Deviation
+f_mead(source, period, sqrtAnnual) =>
+    median = ta.percentile_nearest_rank(source, period, 50)
+    E = 0.0
+    for i = 0 to period - 1 by 1
+        E += math.abs(source[i] - median)
+        E
+    sqrtAnnual * math.sqrt(2) * (E / period)
+
+//Rescale Function
+f_rescale(_src, _size) =>
+    math.max(0, math.min(_size, int(_src / 100 * _size)))
+
+// label Panel Function
+_label(T, color_PnL) =>
+    label PnL_Label = na
+    label.delete(PnL_Label[1])
+    PnL_Label := label.new(time, 0, text=T, color=color_PnL, textcolor=color.white, size=size.normal, style=label.style_label_left, xloc=xloc.bar_time, textalign=text.align_left)
+    label.set_x(PnL_Label, label.get_x(PnL_Label) + math.round(ta.change(time) * 3))
+
+// Round Function
+Round(src, digits) =>
+    p = math.pow(10, digits)
+    math.round(math.abs(src) * p) / p * math.sign(src)
+
+//Options for Inputs
+ON = 'On'
+OFF = 'Off'
+CTC = 'Close to Close'
+PKS = 'Parkinson'
+GK = 'Garman Klass'
+RS = 'Rogers Satchell'
+GKYZ = 'Garman Klass Yang Zhang Extension'
+YZ = 'Yang Zhang'
+EWMA = 'EWMA'
+MAD = 'Mean Absolute Deviation'
+MAAD = 'Median Absolute Deviation'
+L = 'Line'
+SL = 'StepLine'
+Ar = 'Area'
+CL = 'Columns'
+
+// Settings
+H = input.string(EWMA, 'Volatility Model 📊', options=[CTC, PKS, GK, RS, GKYZ, YZ, EWMA, MAD, MAAD])
+period = input.int(30, '  Length', minval=1)
+Annual = input.int(365, '    Annual 📅', minval=2, step=15)
+a = input.float(1.34, '    Alpha (Yang Zhang)', minval=0.01)
+Plen = input.int(365, 'Percentile Length', minval=5, step=15)
+Pco = input.string(ON, 'Percentile Coloring 🌈', options=[OFF, ON]) == ON
+sma = input.string(ON, 'Plot Moving Average 〰', options=[OFF, ON]) == ON
+malen = input.int(30, '  Ma Length', minval=1)
+bsg = input.string(OFF, 'Background Signal', options=[OFF, ON]) == ON
+stl = input.string(CL, 'Plot Style 🖌', options=[L, SL, Ar, CL])
+lT = input.int(2, '  Line Thickness', options=[1, 2, 3])
+i_invert = input.string(OFF, 'Invert Colors', options=[OFF, ON]) == ON
+bg = input.string(ON, 'Dark Background', options=[OFF, ON]) == ON
+sp = input.string(ON, 'Show Information Panel', options=[OFF, ON]) == ON
+
+bgcolor(bg ? color.new(#000000, 20) : na, title='Dark Background', transp=90)
+
+var sqrtAnnual = math.sqrt(Annual) * 100
+
+logr = math.log(close / close[1])
+
+// Historical Volatiity Models
+Hv = if H == CTC
+    f_coc(logr, period, sqrtAnnual)
+else if H == PKS
+    f_park(period, sqrtAnnual)
+else if H == RS
+    f_rsv(period, sqrtAnnual)
+else if H == GK
+    f_gk(period, sqrtAnnual)
+else if H == GKYZ
+    f_gkyz(period, sqrtAnnual)
+else if H == EWMA
+    f_ewma(logr, period, sqrtAnnual)
+else if H == YZ
+    f_yz(a, period, sqrtAnnual)
+else if H == MAD
+    f_mad(logr, period, sqrtAnnual)
+else
+    // H == "Median Absolute Deviation"
+    f_mead(logr, period, sqrtAnnual)
+
+pstyle = stl == L ? plot.style_linebr : stl == SL ? plot.style_stepline : stl == Ar ? plot.style_area : stl == CL ? plot.style_columns : plot.style_line
+
+//Hv Stats
+avgHV = ta.sma(Hv, malen)
+HVP = ta.percentrank(Hv, Plen)
+NearZero = HVP < 1.5 ? 1 : 0
+HV50 = ta.percentile_nearest_rank(Hv, Plen, 50)
+
+// Text Functions
+texthv() =>
+    ' HV: ' + str.tostring(Round(Hv, 2))
+
+textphv() =>
+    'HV 50ᵗʰ Percentile: ' + str.tostring(Round(HV50, 2))
+
+texthvp() =>
+    'HV Percentile: ' + str.tostring(Round(HVP, 2)) + 'ᵗʰ'
+
+// Coloring
+var c_ = array.new_color(na)
+if barstate.isfirst
+    array.push(c_, #0effff)
+    array.push(c_, #00fdf6)
+    array.push(c_, #00fbee)
+    array.push(c_, #00f9e4)
+    array.push(c_, #00f6db)
+    array.push(c_, #00f4d1)
+    array.push(c_, #13f1c6)
+    array.push(c_, #24efbc)
+    array.push(c_, #31ecb1)
+    array.push(c_, #3ce9a6)
+    array.push(c_, #47e69b)
+    array.push(c_, #51e390)
+    array.push(c_, #5adf85)
+    array.push(c_, #62dc7a)
+    array.push(c_, #6ad96e)
+    array.push(c_, #72d563)
+    array.push(c_, #7ad157)
+    array.push(c_, #81cd4b)
+    array.push(c_, #88ca3f)
+    array.push(c_, #8fc532)
+    array.push(c_, #96c123)
+    array.push(c_, #9cbd0e)
+    array.push(c_, #a3b800)
+    array.push(c_, #a9b300)
+    array.push(c_, #b0ae00)
+    array.push(c_, #b6a900)
+    array.push(c_, #bca300)
+    array.push(c_, #c29e00)
+    array.push(c_, #c29e00)
+    array.push(c_, #c89800)
+    array.push(c_, #ce9100)
+    array.push(c_, #d48b00)
+    array.push(c_, #da8400)
+    array.push(c_, #df7c00)
+    array.push(c_, #e57400)
+    array.push(c_, #ea6c00)
+    array.push(c_, #ef6200)
+    array.push(c_, #f35800)
+    array.push(c_, #f74c00)
+    array.push(c_, #fb3e00)
+    array.push(c_, #ff2d00)
+
+    if i_invert
+        array.reverse(c_)
+var sizeOf = array.size(c_) - 1
+colorHV = Pco ? array.get(c_, f_rescale(HVP, sizeOf)) : color.aqua
+
+// Plots
+plot(Hv, 'HV', color=colorHV, linewidth=lT, style=pstyle)
+plot(sma ? avgHV : na, 'sma', color=color.new(#FFFFFF, 25), linewidth=2)
+
+if sp
+    _label(H + texthv() + '\n' + textphv() + '\n' + texthvp() + '\n\n', #000000c0)
+
+col2 = HVP >= 1 ? color.yellow : HVP <= 1 and HVP >= 0.5 ? color.orange : HVP <= 0.5 ? #8D0000 : color.silver
+bgcolor(bsg and NearZero ? col2 : na, transp=50)
